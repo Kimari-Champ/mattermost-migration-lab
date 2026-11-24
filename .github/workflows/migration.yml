@@ -42,8 +42,7 @@ jobs:
               pg_dump -U mmuser -d mattermost > "$BACKUP_NAME"
             echo "Backup successfully saved as $BACKUP_NAME"
           else
-            echo "Error: mattermost-postgres container is not running!"
-            exit 1
+            echo "mattermost-postgres container is not running yet; skipping initial backup."
           fi
 
       - name: Mark Migration as Completed
@@ -54,6 +53,10 @@ jobs:
         env:
           DB_POSTGRES_PASSWORD: ${{ secrets.DB_POSTGRES_PASSWORD }}
         run: |
+          if [ -z "$DB_POSTGRES_PASSWORD" ]; then
+            echo "Error: DB_POSTGRES_PASSWORD is empty! Check GitHub Actions secret."
+            exit 1
+          fi
           echo "Launching Upgraded Mattermost Stack..."
           docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
           echo "Waiting for Mattermost to apply internal database updates..."
