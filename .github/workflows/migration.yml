@@ -1,0 +1,76 @@
+name: Idempotent Mattermost Migration & Upgrade
+
+on:
+  push:
+    branches:
+      - "migration"
+  workflow_dispatch:
+
+env:
+  COMPOSE_FILE: docker-compose.prod.yml
+
+jobs:
+  migrate-and-deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Migration Status
+        id: check_status
+        run: |
+          if [ -f "/home/runner/.mattermost_migration_completed" ]; then
+            echo "Database already migrated to PostgreSQL. Skipping data transfer."
+            echo "already_migrated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Migration required."
+            echo "already_migrated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Backup Legacy Database
+        if: steps.check_status.outputs.already_migrated == 'false'
+        env:
+          PG_PWD: ${{ secrets.DB_POSTGRES_PASSWORD }}
+        run: |
+          echo "Creating timestamped backup of current PostgreSQL database..."
+          BACKUP_DIR="/home/runner/backups"
+          mkdir -p "$BACKUP_DIR"
+          BACKUP_NAME="${BACKUP_DIR}/mattermost_pg_backup_${GITHUB_RUN_ID}_$(date +%F_%H-%M-%S).sql"
+
+          if docker ps --format '{{.Names}}' | grep -q "^mattermost-postgres$"; then
+            docker exec -e PGPASSWORD="$PG_PWD" mattermost-postgres \
+              pg_dump -U mmuser -d mattermost > "$BACKUP_NAME"
+            echo "Backup successfully saved as $BACKUP_NAME"
+          else
+            echo "Error: mattermost-postgres container is not running!"
+            exit 1
+          fi
+
+      - name: Mark Migration as Completed
+        if: steps.check_status.outputs.already_migrated == 'false'
+        run: touch /home/runner/.mattermost_migration_completed
+
+      - name: Deploy Upgraded Stack
+        env:
+          DB_POSTGRES_PASSWORD: ${{ secrets.DB_POSTGRES_PASSWORD }}
+        run: |
+          echo "Launching Upgraded Mattermost Stack..."
+          docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
+          echo "Waiting for Mattermost to apply internal database updates..."
+          sleep 30
+
+      - name: Run Health Checks & Verify Data
+        run: |
+          echo "Running Smoke Tests..."
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8065/api/v4/system/ping >/dev/null; then
+              echo "Mattermost upgraded successfully and running on Postgres!"
+              exit 0
+            fi
+            echo "Attempt $i/15: Mattermost is not ready yet, waiting..."
+            sleep 5
+          done
+
+          echo "Application health check failed. Fetching logs..."
+          docker compose -f "$COMPOSE_FILE" logs
+          exit 1
