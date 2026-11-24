@@ -19,7 +19,7 @@ jobs:
       - name: Check Migration Status
         id: check_status
         run: |
-          if [ -f "/home/runner/.mattermost_migration_completed" ]; then
+          if [ -f "$HOME/.mattermost_migration_completed" ]; then
             echo "Database already migrated to PostgreSQL. Skipping data transfer."
             echo "already_migrated=true" >> "$GITHUB_OUTPUT"
           else
@@ -33,7 +33,7 @@ jobs:
           PG_PWD: ${{ secrets.DB_POSTGRES_PASSWORD }}
         run: |
           echo "Creating timestamped backup of current PostgreSQL database..."
-          BACKUP_DIR="/home/runner/backups"
+          BACKUP_DIR="$HOME/backups"
           mkdir -p "$BACKUP_DIR"
           BACKUP_NAME="${BACKUP_DIR}/mattermost_pg_backup_${GITHUB_RUN_ID}_$(date +%F_%H-%M-%S).sql"
 
@@ -48,7 +48,7 @@ jobs:
 
       - name: Mark Migration as Completed
         if: steps.check_status.outputs.already_migrated == 'false'
-        run: touch /home/runner/.mattermost_migration_completed
+        run: touch "$HOME/.mattermost_migration_completed"
 
       - name: Deploy Upgraded Stack
         env:
